@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Online Shopping &amp; Order Management System</title>
+<style>
+:root{--navy:#1d2b4f;--gold:#e0a526;--bg:#f6f5f1;--card:#fff;--line:#dcd9cf;--ink:#1c1f2a;--mute:#6a6d78;--ok:#2d7a4f;--bad:#b3392f}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,sans-serif;line-height:1.45}
+header{background:var(--navy);color:#fff;padding:16px 18px}
+header h1{margin:0;font-size:1.15rem}
+header p{margin:2px 0 0;font-size:.85rem;opacity:.8}
+nav{display:flex;gap:6px;padding:10px 14px;overflow-x:auto;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:2}
+nav button{flex:none;border:1px solid var(--line);background:#fff;padding:8px 14px;border-radius:8px;font:inherit;cursor:pointer}
+nav button.on{background:var(--navy);border-color:var(--navy);color:#fff}
+main{max-width:900px;margin:auto;padding:14px}
+h2{font-size:1.1rem;margin:18px 0 8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px}
+.card b{display:block}
+.mute{color:var(--mute);font-size:.85rem}
+.price{font-weight:700;color:var(--navy)}
+button.btn{background:var(--navy);color:#fff;border:0;border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer}
+button.btn.alt{background:#fff;color:var(--navy);border:1px solid var(--navy)}
+button.btn:disabled{opacity:.4;cursor:not-allowed}
+button.btn:focus-visible,nav button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--gold);outline-offset:1px}
+input,select{width:100%;padding:9px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff;color:var(--ink)}
+label{font-size:.8rem;color:var(--mute);display:block;margin-bottom:3px}
+.form{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;align-items:end}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border:0}
+.qty{display:flex;align-items:center;gap:8px}
+.qty button{width:30px;height:30px;border-radius:6px;border:1px solid var(--line);background:#fff;font-size:1rem;cursor:pointer}
+.tag{display:inline-block;font-size:.75rem;padding:2px 8px;border-radius:99px;background:#eceae1}
+.tag.ok{background:#dcefe3;color:var(--ok)}
+.tag.bad{background:#f6dcd9;color:var(--bad)}
+.total{font-size:1.1rem;font-weight:700;display:flex;justify-content:space-between;padding-top:8px}
+details{margin-top:12px}
+summary{cursor:pointer;font-weight:600}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:8px;font-size:.9rem;max-width:90%}
+.actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+@media (prefers-color-scheme:dark){
+:root{--bg:#12151f;--card:#1b1f2e;--line:#2d3347;--ink:#eceef5;--mute:#9aa0b3}
+nav,input,select,nav button,.qty button,button.btn.alt{background:#1b1f2e;color:var(--ink)}
+.price,button.btn.alt{color:var(--gold)}button.btn.alt{border-color:var(--gold)}
+.tag{background:#2a3047}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Online Shopping &amp; Order Management</h1>
+  <p>Customers, products, orders, order items and payments</p>
+</header>
+<nav id="nav"></nav>
+<main id="app"></main>
+<div id="toast" hidden></div>
+
+<script>
+const KEY = 'shop_db_v1';
+
+/* ---------- Data (mirrors the ERD tables) ---------- */
+const seed = () => ({
+  seq: {c: 3, p: 4, o: 1, i: 1, pay: 1},
+  customers: [
+    {id: 1, first: 'Maria', last: 'Santos', email: 'maria@example.com', phone: '09171234567', address: '123 Rizal St, Manila'},
+    {id: 2, first: 'John', last: 'Reyes', email: 'john@example.com', phone: '09181234567', address: '45 Mabini Ave, Cebu'}
+  ],
+  products: [
+    {id: 1, name: 'Wireless Mouse', desc: 'Bluetooth mouse', cat: 'Electronics', price: 499, stock: 50},
+    {id: 2, name: 'Notebook', desc: 'A5 ruled notebook', cat: 'School Supplies', price: 59.5, stock: 200},
+    {id: 3, name: 'Water Bottle', desc: '1L steel bottle', cat: 'Lifestyle', price: 350, stock: 80}
+  ],
+  orders: [],     // OrderID, CustomerID, OrderDate, TotalAmount, PaymentStatus, OrderStatus
+  items: [],      // OrderItemID, OrderID, ProductID, Quantity, UnitPrice, Subtotal
+  payments: []    // PaymentID, OrderID, PaymentDate, PaymentMethod, AmountPaid, PaymentStatus
+});
+let db = null;
+try { db = JSON.parse(localStorage.getItem(KEY)); } catch (e) {}
+db = db || seed();
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) {} };
+
+/* ---------- Helpers ---------- */
+const $ = s => document.querySelector(s);
+const money = n => '₱' + Number(n).toFixed(2);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const byId = (list, id) => list.find(x => x.id === Number(id));
+const val = id => $('#' + id).value.trim();
+let tab = 'shop', cart = {}, custSel = 0, tt;
+const TABS = [['shop','Shop'],['customers','Customers'],['orders','Orders'],['payments','Payments']];
+const STATUS = ['Pending','Processing','Shipped','Delivered'];
+
+function toast(msg){
+  const t = $('#toast'); t.textContent = msg; t.hidden = false;
+  clearTimeout(tt); tt = setTimeout(() => t.hidden = true, 2600);
+}
+function go(t){ tab = t; render(); window.scrollTo(0, 0); }
+
+/* ---------- Actions ---------- */
+function addProduct(){
+  const name = val('pn'), price = parseFloat(val('pp')), stock = parseInt(val('ps') || '0', 10);
+  if (!name || !(price >= 0)) return toast('Enter a product name and a price.');
+  db.products.push({id: db.seq.p++, name, desc: val('pd'), cat: val('pc'), price, stock: stock || 0});
+  save(); render(); toast('Product added.');
+}
+function addCustomer(){
+  const first = val('cf'), last = val('cl'), email = val('ce');
+  if (!first || !last || !email) return toast('First name, last name and email are required.');
+  if (db.customers.some(c => c.email.toLowerCase() === email.toLowerCase())) return toast('That email is already registered.');
+  db.customers.push({id: db.seq.c++, first, last, email, phone: val('cp'), address: val('ca')});
+  save(); render(); toast('Customer added.');
+}
+function setCart(pid, delta){
+  const p = byId(db.products, pid), q = (cart[pid] || 0) + delta;
+  if (q > p.stock) return toast('Only ' + p.stock + ' in stock.');
+  if (q <= 0) delete cart[pid]; else cart[pid] = q;
+  render();
+}
+function placeOrder(){
+  const ids = Object.keys(cart);
+  if (!custSel) return toast('Choose a customer first.');
+  if (!ids.length) return toast('Add at least one product.');
+  const o = {id: db.seq.o++, customerId: custSel, date: new Date().toISOString(), total: 0, payStatus: 'Unpaid', status: 'Pending'};
+  ids.forEach(pid => {
+    const p = byId(db.products, pid), q = cart[pid], sub = p.price * q;   // Subtotal = UnitPrice × Quantity
+    p.stock -= q;
+    o.total += sub;                                                        // TotalAmount = sum of subtotals
+    db.items.push({id: db.seq.i++, orderId: o.id, productId: p.id, qty: q, unitPrice: p.price, subtotal: sub});
+  });
+  db.orders.push(o); cart = {}; save(); tab = 'orders'; render(); toast('Order #' + o.id + ' placed.');
+}
+function pay(oid){
+  const o = byId(db.orders, oid), amt = parseFloat(val('amt' + oid));
+  if (!(amt > 0)) return toast('Enter the amount paid.');
+  db.payments.push({id: db.seq.pay++, orderId: o.id, date: new Date().toISOString(), method: val('met' + oid), amount: amt, status: 'Paid'});
+  const paid = db.payments.filter(p => p.orderId === o.id).reduce((s, p) => s + p.amount, 0);
+  o.payStatus = paid >= o.total ? 'Paid' : 'Partial';
+  if (o.payStatus === 'Paid' && o.status === 'Pending') o.status = 'Processing';
+  save(); render(); toast('Payment recorded.');
+}
+function advance(oid){
+  const o = byId(db.orders, oid), i = STATUS.indexOf(o.status);
+  if (i < STATUS.length - 1) o.status = STATUS[i + 1];
+  save(); render();
+}
+function resetData(){
+  if (!confirm('Reset all data to the sample records?')) return;
+  db = seed(); cart = {}; custSel = 0; save(); render();
+}
+
+/* ---------- Views ---------- */
+function shop(){
+  const cartIds = Object.keys(cart);
+  const total = cartIds.reduce((s, id) => s + byId(db.products, id).price * cart[id], 0);
+  return `
+  <h2>Products</h2>
+  <div class="grid">${db.products.map(p => `
+    <div class="card">
+      <b>${esc(p.name)}</b>
+      <span class="mute">${esc(p.cat)} · ${p.stock} in stock</span>
+      <p class="mute">${esc(p.desc)}</p>
+      <div class="row"><span class="price">${money(p.price)}</span>
+      <button class="btn" ${p.stock - (cart[p.id] || 0) < 1 ? 'disabled' : ''} onclick="setCart(${p.id},1)">Add to cart</button></div>
+    </div>`).join('') || '<p class="mute">No products yet. Add one below.</p>'}</div>
+
+  <h2>Your cart</h2>
+  <div class="card">
+    <label for="cust">Customer</label>
+    <select id="cust" onchange="custSel=Number(this.value)">
+      <option value="0">Choose a customer</option>
+      ${db.customers.map(c => `<option value="${c.id}" ${c.id === custSel ? 'selected' : ''}>${esc(c.first + ' ' + c.last)}</option>`).join('')}
+    </select>
+    ${cartIds.length ? cartIds.map(id => { const p = byId(db.products, id); return `
+      <div class="row"><span>${esc(p.name)}<br><span class="mute">${money(p.price)} each</span></span>
+      <span class="qty"><button aria-label="Remove one" onclick="setCart(${p.id},-1)">−</button>${cart[id]}<button aria-label="Add one" onclick="setCart(${p.id},1)">+</button></span>
+      <b>${money(p.price * cart[id])}</b></div>`; }).join('')
+      : '<p class="mute">Your cart is empty. Add a product to start an order.</p>'}
+    <div class="total"><span>Total</span><span>${money(total)}</span></div>
+    <div class="actions"><button class="btn" onclick="placeOrder()">Place order</button></div>
+  </div>
+
+  <details><summary>Add a product</summary>
+    <div class="card form" style="margin-top:8px">
+      <div><label for="pn">Name</label><input id="pn"></div>
+      <div><label for="pc">Category</label><input id="pc"></div>
+      <div><label for="pp">Unit price</label><input id="pp" type="number" min="0" step="0.01"></div>
+      <div><label for="ps">Stock quantity</label><input id="ps" type="number" min="0"></div>
+      <div><label for="pd">Description</label><input id="pd"></div>
+      <button class="btn" onclick="addProduct()">Save product</button>
+    </div>
+  </details>`;
+}
+
+function customers(){
+  return `
+  <h2>Customers</h2>
+  <div class="card">${db.customers.map(c => {
+    const n = db.orders.filter(o => o.customerId === c.id).length;
+    return `<div class="row"><span><b>${esc(c.first + ' ' + c.last)}</b>
+      <span class="mute">${esc(c.email)}${c.phone ? ' · ' + esc(c.phone) : ''}<br>${esc(c.address)}</span></span>
+      <span class="tag">${n} order${n === 1 ? '' : 's'}</span></div>`; }).join('') || '<p class="mute">No customers yet.</p>'}</div>
+  <details open><summary>Add a customer</summary>
+    <div class="card form" style="margin-top:8px">
+      <div><label for="cf">First name</label><input id="cf"></div>
+      <div><label for="cl">Last name</label><input id="cl"></div>
+      <div><label for="ce">Email</label><input id="ce" type="email"></div>
+      <div><label for="cp">Phone</label><input id="cp" type="tel"></div>
+      <div><label for="ca">Address</label><input id="ca"></div>
+      <button class="btn" onclick="addCustomer()">Save customer</button>
+    </div>
+  </details>`;
+}
+
+function orders(){
+  if (!db.orders.length) return '<h2>Orders</h2><p class="mute">No orders yet. Place one from the Shop tab.</p>';
+  return '<h2>Orders</h2>' + [...db.orders].reverse().map(o => {
+    const c = byId(db.customers, o.customerId);
+    const its = db.items.filter(i => i.orderId === o.id);
+    const paid = db.payments.filter(p => p.orderId === o.id).reduce((s, p) => s + p.amount, 0);
+    const due = Math.max(o.total - paid, 0);
+    return `<div class="card" style="margin-bottom:10px">
+      <div class="row"><b>Order #${o.id} · ${esc(c ? c.first + ' ' + c.last : 'Unknown')}</b>
+        <span class="tag ${o.payStatus === 'Paid' ? 'ok' : 'bad'}">${o.payStatus}</span></div>
+      <p class="mute">${new Date(o.date).toLocaleString()} · ${o.status}</p>
+      ${its.map(i => `<div class="row"><span>${esc(byId(db.products, i.productId)?.name || 'Product')} × ${i.qty}</span><span>${money(i.subtotal)}</span></div>`).join('')}
+      <div class="total"><span>Total</span><span>${money(o.total)}</span></div>
+      <p class="mute">Paid ${money(paid)} · Balance ${money(due)}</p>
+      ${due > 0 ? `<div class="form">
+        <div><label for="amt${o.id}">Amount paid</label><input id="amt${o.id}" type="number" step="0.01" value="${due.toFixed(2)}"></div>
+        <div><label for="met${o.id}">Method</label><select id="met${o.id}"><option>Cash</option><option>GCash</option><option>Credit card</option><option>Bank transfer</option></select></div>
+        <button class="btn" onclick="pay(${o.id})">Record payment</button></div>` : ''}
+      ${o.status !== 'Delivered' ? `<div class="actions"><button class="btn alt" onclick="advance(${o.id})">Mark as ${STATUS[STATUS.indexOf(o.status) + 1]}</button></div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function payments(){
+  const sum = db.payments.reduce((s, p) => s + p.amount, 0);
+  return `<h2>Payments</h2>
+  <div class="card">${[...db.payments].reverse().map(p => `
+    <div class="row"><span><b>Payment #${p.id}</b> for order #${p.orderId}
+      <span class="mute"><br>${esc(p.method)} · ${new Date(p.date).toLocaleString()}</span></span>
+      <span><b>${money(p.amount)}</b> <span class="tag ok">${p.status}</span></span></div>`).join('')
+      || '<p class="mute">No payments recorded. Record one from the Orders tab.</p>'}
+    <div class="total"><span>Total received</span><span>${money(sum)}</span></div>
+  </div>
+  <div class="actions" style="margin-top:14px"><button class="btn alt" onclick="resetData()">Reset sample data</button></div>`;
+}
+
+function render(){
+  $('#nav').innerHTML = TABS.map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" onclick="go('${k}')">${l}</button>`).join('');
+  $('#app').innerHTML = {shop, customers, orders, payments}[tab]();
+}
+render();
+</script>
+</body>
+</html>
